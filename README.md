@@ -6,7 +6,7 @@
 
 ## Scenario
 
-October is known to be spooky, and this year is no different. In the first half of the month, an unfamiliar script surfaced in the user's Downloads directory. Not long after, multiple machines were found to start spawning processes originating from the Downloads folder as well. The machines were found to share the same types of files, naming patterns, and similar executables. The goal is to identify what the attacker has compromised and to eradicate any persistence they may have established.
+October is known to be spooky, and this year is no different. In the first half of the month, an unfamiliar script surfaced in the user's Downloads directory. Not long after, multiple machines were found to start spawning processes originating from the Downloads folder as well. The machines were found to share the same types of files, naming patterns, and similar executables. The goal is to identify what the actor has compromised and to eradicate any persistence they may have established.
 
 ### High-Level IoC Discovery Plan
 - **Check `DeviceProcessEvents`** to identify the suspicious machine, recon attempts in network & priviledges.
@@ -17,7 +17,7 @@ October is known to be spooky, and this year is no different. In the first half 
 
 ## Starting Point
 
-establish the suspicious machine
+We need to first find our starting point. Knowing that this issue started in the first half of October, we can establish a timeframe. Also, we can use `DeviceProcessEvents` to investigate what happened in Downloads folder. In order to catch everything, we need to use `matches regex @"(?i)(..|..|..).*\.exe"`. That way we will see all regular expressions, as a string, ignoring case sensitivity, and ending in an `.exe`.
 ```kql
 DeviceProcessEvents
 | where TimeGenerated between (datetime(2025-10-01) .. datetime(2025-10-16))
@@ -37,6 +37,8 @@ Question: Identify the most suspicious machine based on the given conditions
 ---
 
 ### 🚩 1. Initial Execution Detection
+
+Since we have established the most suspicious machine, we need to detect the earliest time it executed unusual code. Again, we use `DeviceProcessEvents` to discover that. This helps us anchor the timeline and follow the parent/child chain.
 
 ```kql
 DeviceProcessEvents
@@ -62,6 +64,8 @@ Question: What was the first CLI parameter name used during the execution of the
 ---
 
 ### 🚩 2. Defense Disabling
+
+With a suspicious program running on a compromised machine, we'll also need to check if our security posture has changed. Was anything tampered with? Even if failed or simply just an intent, any sort of indicator of activity there still can be a threat. Let's investigate. Again we use `matches regex @"(?i)"` along with the string `tamper` to find any regular, non-case-sensitive expression with the word tamper in it.
 
 ```kql
 //search for artifact creation
@@ -89,6 +93,8 @@ Question: What was the name of the file related to this exploit?
 ---
 
 ### 🚩 3. Quick Data Probe
+
+Okay, at this point, the actor would still be probing for information, most likely something quick to acquire that would also hold sensitive information. Perhaps where copying and pasting is made possible, the clip board. Let's discover if the actor ran any command to access the clipboard. We will search, including the values of `powershell` and `clip` for any sort of event.
 
 ```kql
 //looking for checks, actions that read data
@@ -119,6 +125,8 @@ Question: Provide the command value tied to this particular exploit.
 
 ### 🚩 4. Host Context Recon
 
+After low-effort wins, we can expect the actor to continue to prob and collect information of the environment or account details. At this point, we don't expect them to modify anything yet, so we're just looking for any context-gathering decisions. This is where we expect them to use `qwinsta` command to discover any active user sessions on a system.
+
 ```kql
    //looking for activity/actions
 DeviceProcessEvents
@@ -146,6 +154,8 @@ Question: Point out when the last recon attempt was.
 
 ### 🚩 5. Storage Surface Mapping
 
+After using `qwinsta`, let's check if the actor discovered any storage locations. After recon, we can expect lightweight checks of available storage and even enumeration of filesystems or share surfaces.
+
 ```kql
    //looking for discovery of storage, looking for chekcs of available storage
 DeviceProcessEvents
@@ -171,6 +181,8 @@ Question: Provide the 2nd command tied to this activity.
 ---
 
 ### 🚩 6. Connectivity & Name Resolution Check
+
+Since we confirmed that the actor discovered storage locations, we need to identify checks that validate network reachability. Are there network events or process events that indicate outward connectivity probes? We need to confirm egress before attempting to move data off host. We will use `DeviceProcessEvents` to look for any actions that resemble network probing.
 
 ```kql
    //looking for checks on the network and name resolution
@@ -203,6 +215,8 @@ Question: Provide the File Name of the initiating parent process.
 
 ### 🚩 7. Interactive Session Discovery
 
+Did the actor detect user sessions on the host? Let's look for reveal attempts and signals that enumerate current session state without taking over the host. The reason the actor may do this is because knowing which sessions are active helps them decide whether to act immediately or wait. Let's search for `qwi` to see if any query sessions have been processed.
+
 ```kql
     //looking for actions to detect sessions
 DeviceProcessEvents
@@ -228,10 +242,8 @@ Question: What is the unique ID of the initiating process?
 
 ### 🚩 8. Runtime Application Inventory
 
-```kql
+Once the actor knows the current session state, they can look for running applications and services to inform them of any risks or opportunities. We need to look for any events that queries running services.
 
-```
-picture
 Question: Provide the file name of the process that best demonstrates a runtime process enumeration event on the target host.
 
 <details>
@@ -243,6 +255,8 @@ Question: Provide the file name of the process that best demonstrates a runtime 
 ---
 
 ### 🚩 9. Privilege Surface Check
+
+Now the actor can discover what permissions and priviledges are available to them. We need to look for any telemetry that indicates queries of priviledge. We can search `DeviceProcessEvents` for anything like a `whoami`.
 
 ```kql
    //looking for attempts to understand priviledges available
@@ -270,6 +284,8 @@ Question: Identify the timestamp of the very first attempt.
 
 ### 🚩 10. Proof-of-Access & Egress Validation
 
+We also need to find evidence of outbound network checks, activity, and artifacts create as proof the actor can view or collect host data. We can look for any Network Events that stemmed from the `InitiatingProcessParentFileName`. That way we can trace if and when the actor contacts an outbound destination.
+
 ```kql
    //looking for actions that validate outbound reachability and attempt to capture host state
 DeviceNetworkEvents
@@ -295,6 +311,8 @@ Question: Which outbound destination was contacted first?
 ---
 
 ### 🚩 11. Bundling / Staging Artifacts
+
+We have now established that the actor has contacted an outbound destination. Now we need to look for any sort of consolidation of artifacts/data to a single location, as that indicates transfer and exfiltration. By using `DeviceFileEvents`, we can find zip files and others similar to it while we also keep the field of `InitiatingProcessParentFileName`.
 
 ```kql
    //Looking for File system events. Looking for consolidation of artifacts
@@ -324,6 +342,8 @@ Question: Provide the full folder path value where the artifact was first droppe
 
 ### 🚩 12. Outbound Transfer Attempt (Simulated)
 
+Since the artifacts have been consolidated, we can assume the actor will attempt to move the data off host. We need to check for any network events that would suggest that. We will look for any unusual outbound connections.
+
 ```kql
    //Looking for network event indicating outbound transfers
 DeviceNetworkEvents
@@ -349,6 +369,8 @@ Question: Provide the IP of the last unusual outbound connection.
 ---
 
 ### 🚩 13. Scheduled Re-Execution Persistence
+
+We need to also detect any creation of persistence. Did the actor create anything that may run again on a schedule or a signin. Any sort of re-execution mechanism is an actors way of surviving past a single session.
 
 ```kql
    //looking for creation of scheduler-related events
@@ -376,10 +398,10 @@ Question: Provide the value of the task name down below.
 
 ### 🚩 14. Autorun Fallback Persistence
 
-```kql
+We also need to investigate any autorun entries placed as backup persistence. Anything that may resemble an autorun stemming from the `InitiatingProcessParentFileName` is an example of redundant persistence. That increases their resilience. We need to check the registry for any modifications.
 
-```
-picture
+<img width="1788" height="478" alt="image" src="https://github.com/user-attachments/assets/29af1c49-1268-4db2-b0b7-cc729f126ea0" />
+
 
 Question: What was the name of the registry value?
 
@@ -391,6 +413,8 @@ Question: What was the name of the registry value?
 ---
 
 ### 🚩 15. Planted Narrative / Cover Artifact
+
+This all started out as a routine support ticket. The actor wouldnt just leave without justifying the activity. We need to look for any creation of explanatory files around the time of the suspicious operations, as this file would be used as a classic misdirection.
 
 ```kql
     //Looking for "explanatory" file creation. 
@@ -412,6 +436,7 @@ Question: Identify the file name of the artifact left behind.
 </details>
 
 ---
+## Summary Table
 
 | Flag | Description                        | Value |
 |------|------------------------------------|-------|
@@ -434,33 +459,5 @@ Question: Identify the file name of the artifact left behind.
 
 ---
 
-🧠 Logical Flow & Analyst Reasoning
-0 ➝ 1 🚩: An unfamiliar script surfaced in the user’s Downloads directory. Was this SupportTool.ps1 executed under the guise of IT diagnostics?
-
-1 ➝ 2 🚩: Initial execution often precedes an attempt to weaken defenses. Did the operator attempt to tamper with security tools to reduce visibility?
-
-2 ➝ 3 🚩: With protections probed, the next step is quick data checks. Did they sample clipboard contents to see if sensitive material was immediately available?
-
-3 ➝ 4 🚩: Attackers rarely stop with clipboard data. Did they expand into broader environmental reconnaissance to understand the host and user context?
-
-4 ➝ 5 🚩: Recon of the system itself is followed by scoping available storage. Did the attacker enumerate drives and shares to see where data might live?
-
-5 ➝ 6 🚩: After scoping storage, connectivity is key. Did they query network posture or DNS resolution to validate outbound capability?
-
-6 ➝ 7 🚩: Once network posture is confirmed, live session data becomes valuable. Did they check active users or sessions that could be hijacked or monitored?
-
-7 ➝ 8 🚩: Session checks alone aren’t enough — attackers want a full picture of the runtime. Did they enumerate processes to understand active applications and defenses?
-
-8 ➝ 9 🚩: Process context often leads to privilege mapping. Did the operator query group memberships and privileges to understand access boundaries?
-
-9 ➝ 10 🚩: With host and identity context in hand, attackers often validate egress and capture evidence. Was there an outbound connectivity check coupled with a screenshot of the user’s desktop?
-
-10 ➝ 11 🚩: After recon and evidence collection, staging comes next. Did the operator bundle key artifacts into a compressed archive for easy movement?
-
-11 ➝ 12 🚩: Staging rarely stops locally — exfiltration is tested soon after. Were outbound HTTP requests attempted to simulate upload of the bundle?
-
-12 ➝ 13 🚩: Exfil attempts imply intent to return. Did the operator establish persistence through scheduled tasks to ensure continued execution?
-
-13 ➝ 14 🚩: Attackers rarely trust a single persistence channel. Was a registry-based Run key added as a fallback mechanism to re-trigger the script?
-
-14 ➝ 15 🚩: Persistence secured, the final step is narrative control. Did the attacker drop a text log resembling a helpdesk chat to possibly justify these suspicious activities? 
+**Report Completed By:** William Olega
+**Status:** ✅ All 15 flags investigated and confirmed
