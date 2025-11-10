@@ -1,6 +1,6 @@
 # Threat Hunt Report: Helpdesk Deception
 
-**Participant:** William Olega
+**Participant:** William Olega  
 **Date:** November 2025
 
 
