@@ -1,5 +1,9 @@
 # Threat Hunt Report: Helpdesk Deception
 
+**Participant:** William Olega
+**Date:** November 2025
+
+
 ## Platforms and Languages Leveraged
 - Log Analytics Workspaces (Microsoft Azure)
 - Kusto Query Language (KQL)
